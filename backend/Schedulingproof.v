@@ -823,7 +823,48 @@ End SIMULATION_SEQUENCE.
 
 (* TODO Warning: simple but machine dependent;
       Try to make codes the same *)
-Section MACHINE_DEPENDENT_X86.
+
+Section MACHINE_DEPENDENT_RISCV.
+
+Lemma eval_op_genv_irrelevent: forall prog tprog: program,
+  let ge := Genv.globalenv prog in
+  let tge := Genv.globalenv tprog in
+    forall sp op lv m 
+    (SYMB: forall s, Genv.find_symbol tge s = Genv.find_symbol ge s),
+      eval_operation ge sp op lv m = eval_operation tge sp op lv m.
+Proof.
+  intros. destruct lv; auto. destruct op; simpl; auto.
+  unfold Genv.symbol_address. rewrite SYMB; auto.
+Qed.
+
+Lemma eval_addr_genv_irrelevent: forall prog tprog: program,
+let ge := Genv.globalenv prog in
+let tge := Genv.globalenv tprog in
+  forall sp addr lv
+  (SYMB: forall s, Genv.find_symbol tge s = Genv.find_symbol ge s),
+  eval_addressing ge sp addr lv = eval_addressing tge sp addr lv.
+Proof.
+  intros. destruct lv; auto. destruct addr; simpl; auto.
+  unfold Genv.symbol_address. rewrite SYMB; auto.
+Qed.
+
+Definition mem_read_op (op: operation) :=
+  match op with
+  | Ocmp _   => true
+  (* | Osel _ _ => true   *)
+      (* riscv does not have this op; compatible for x86, arm, powerpc, aarch64 *)
+  | _ => false
+  end.
+
+Lemma eval_op_mem_irrelevant: forall prog: program,
+let ge := Genv.globalenv prog in
+  forall op sp rs m1 m2, mem_read_op op = false ->
+    eval_operation ge sp op rs m1 = eval_operation ge sp op rs m2.
+Proof. intros. destruct op; auto; simpl in H; discriminate H. Qed. 
+
+End MACHINE_DEPENDENT_RISCV.
+
+(* Section MACHINE_DEPENDENT_X86.
 
   Lemma eval_op_genv_irrelevent: forall prog tprog: program,
     let ge := Genv.globalenv prog in
@@ -850,7 +891,6 @@ Section MACHINE_DEPENDENT_X86.
     unfold Genv.symbol_address. rewrite SYMB; auto.
   Qed.
 
-
   Definition mem_read_op (op: operation) :=
     match op with
     | Ocmp _   => true
@@ -864,7 +904,7 @@ Section MACHINE_DEPENDENT_X86.
       eval_operation ge sp op rs m1 = eval_operation ge sp op rs m2.
   Proof. intros. destruct op; auto; simpl in H; discriminate H. Qed. 
 
-End MACHINE_DEPENDENT_X86.
+End MACHINE_DEPENDENT_X86. *)
 
 Definition slot_eqb: slot -> slot -> bool.
 Proof. boolean_equality. Defined.
@@ -1545,7 +1585,8 @@ Section SINGLE_SWAP_CORRECTNESS.
     erewrite eval_addressing_preserved; eauto. eapply symbols_preserved. 
     eapply lsagree_symmetric; eauto. erewrite <- lsagree_get; eauto.
     eapply eq_refl. eapply match_regular_state; eauto.
-    eapply lsagree_undef_regs; eauto. mem_eq.
+    (* eapply lsagree_undef_regs; eauto.  *)
+    mem_eq.
     (* Lcall *)
     inv MEM. eapply find_function_match in H9 as [cunit [tf []]].
     erewrite lsagree_find_function in H; eauto.
@@ -2411,12 +2452,14 @@ Section ABSTRACT_LIST_SCHEDULER.
         list (positive * instruction) ->  (* full original codes in the function *)
           option positive.   (* which one in valid-instrucion-list (2nd augument) to pick next *)
 
-  Definition firstpick:
+  (* Definition firstpick:
     list (positive * instruction) -> (* already scheduled instruction*)
       list (positive * instruction) ->  (* valid to schedule as next instruction *)
         list (positive * instruction) ->  (* full original codes in the function *)
           positive * instruction.   (* which one in valid-instrucion-list (2nd augument) to pick next *)
-  Admitted.
+  Admitted. *)
+
+  Variable oracle: list (positive * instruction) -> list (positive * instruction).
 
   (* Definition firstpick (l1 l2 l3: numbblock) :=  *)
 
@@ -2472,19 +2515,30 @@ Section ABSTRACT_LIST_SCHEDULER.
     | Some (i, ps) => PS.mem (fst pi2) ps
     end.
 
-  Lemma dep_GenRb'_correct:
-    forall l i pi1 pi2, dep_GenRb' i l pi1 pi2 = true -> GenR' HBR l i pi1 pi2.
+  Lemma dep_GenRb'_sound:
+    forall l k pi1 pi2, In pi1 (numlistgen' l k) -> In pi2 (numlistgen' l k) -> 
+      dep_GenRb' k l pi1 pi2 = true -> GenR' HBR l k pi1 pi2.
   Proof.
-    intros. unfold dep_GenRb' in H. destruct pi1 as [p1 i1]; simpl in H.
-    remember ((dep_map (rev (numlistgen' l i))) !! p1) as b.
-    destruct b; symmetry in Heqb.
-    - destruct p as [i1' ps]. destruct pi2 as [p2 i2]; simpl in H.
+    intros. unfold dep_GenRb' in H1. destruct pi1 as [p1 i1]; simpl in H1.
+    remember ((dep_map (rev (numlistgen' l k))) !! p1) as b.
+    destruct b; symmetry in Heqb. 2: discriminate H1.
+    destruct p as [i1' ps]. destruct pi2 as [p2 i2]; simpl in H1.
+    eapply GenR_intro; eauto.
+ 
     (* should be fine? *) 
   Admitted.
 
-  Lemma dep_GenRb_correct:
+  Lemma dep_GenRb'_complete:
+    forall l i pi1 pi2, GenR' HBR l i pi1 pi2 -> dep_GenRb' i l pi1 pi2 = true.
+  Proof.
+    intros. inv H. unfold dep_GenRb'. destruct pi1 as [p1 i1]; simpl.
+    
+
+  Admitted.
+
+  (* Lemma dep_GenRb_sound:
     forall l pi1 pi2, dep_GenRb l pi1 pi2 = true -> GenR HBR l pi1 pi2.
-  Proof. unfold dep_GenRb. intros. eapply dep_GenRb'_correct; eauto. Qed.
+  Proof. unfold dep_GenRb. intros. eapply dep_GenRb'_sound; eauto. Qed. *)
 
   Print List.rev.
 
